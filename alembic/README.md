@@ -45,7 +45,9 @@ Edit the `alembic/env.py` file to integrate with your SQLModel metadata for auto
 
   ```
   from sqlmodel import SQLModel
+  import model.py 
   ```
+(or however your models are organized) so that SQLModel.metadata includes all these tables.
 
 - Modify the `target_metadata` assignment to:
 
@@ -54,6 +56,17 @@ Edit the `alembic/env.py` file to integrate with your SQLModel metadata for auto
   ```
 
 This setup connects Alembic’s autogenerate feature with your current SQLModel definitions.
+
+Edit the `script.py.mako` file to ensure when  running alembic revision ...., the migration scripts will automatically have the import import sqlmodel.sql.sqltypes.
+
+```
+from typing import Sequence, Union
+
+from alembic import op
+import sqlalchemy as sa
+import import sqlmodel.sql.sqltypes
+${imports if imports else ""}
+```
 
 ---
 
