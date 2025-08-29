@@ -44,7 +44,6 @@ Edit the `alembic/env.py` file to integrate with your SQLModel metadata for auto
 - Import SQLModel at the top:
 
   ```
-  from sqlmodel import SQLModel
   import model.py 
   ```
 (or however your models are organized) so that SQLModel.metadata includes all these tables.
@@ -52,7 +51,7 @@ Edit the `alembic/env.py` file to integrate with your SQLModel metadata for auto
 - Modify the `target_metadata` assignment to:
 
   ```
-  target_metadata = SQLModel.metadata
+  target_metadata = model.SQLModel.metadata
   ```
 
 This setup connects Alembic’s autogenerate feature with your current SQLModel definitions.
