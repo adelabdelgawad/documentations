@@ -1,69 +1,70 @@
 
 # Alembic Database Migration Setup and Usage Guide
 
-## 1. Install Required System Dependencies (Linux Only)
-
-If running on a Linux operating system, before installing Alembic and related tools, execute the following command to install necessary system libraries and headers:
-
-```
-sudo apt install libpq-dev gcc python3-dev
-```
-
-These packages ensure successful compilation and integration with PostgreSQL and Python development tools.
+This guide provides a step-by-step process for setting up and managing database schema migrations with **Alembic** in a project using **SQLModel**.
 
 ---
 
-## 2. Initialize Alembic in the Project
+## 1. Install System Dependencies (Linux Only)
 
-Navigate to your `db` module directory (the folder where your database-related code resides) and initialize Alembic by running:
+On Linux systems, install the required system packages before setting up Alembic to ensure compatibility with PostgreSQL and Python development tools:
 
+```bash
+sudo apt install libpq-dev gcc python3-dev
 ```
+
+---
+
+## 2. Initialize Alembic
+
+Navigate to your project’s `db` module (or wherever your database logic resides) and initialize Alembic:
+
+```bash
 alembic init alembic
 ```
 
-This command creates the Alembic environment and configuration files under an `alembic` directory inside your `db` module.
+This creates an `alembic` directory containing the environment and configuration files necessary for migration management.
 
 ---
 
 ## 3. Configure Database Connection
 
-Open the `alembic.ini` file (created during initialization) and update the `sqlalchemy.url` parameter to match your database connection string. For example:
+Open the **`alembic.ini`** file and update the `sqlalchemy.url` parameter with your database connection string. For example:
 
-```
+```ini
 sqlalchemy.url = mysql+pymysql://username:password@localhost/dbname
 ```
 
-Make sure this URL points correctly to your target database.
+Ensure this connection string matches your target database.
 
 ---
 
-## 4. Update Alembic Environment Script
+## 4. Configure Alembic Environment
 
-Edit the `alembic/env.py` file to integrate with your SQLModel metadata for autogeneration to work properly:
+Modify **`alembic/env.py`** to integrate with SQLModel and enable schema autogeneration:
 
-- Import SQLModel at the top:
+* Import your models module at the top:
 
+  ```python
+  import model  # adjust import path as needed
   ```
-  import model.py 
-  ```
-(or however your models are organized) so that SQLModel.metadata includes all these tables.
 
-- Modify the `target_metadata` assignment to:
+* Update the `target_metadata` variable:
 
-  ```
+  ```python
   target_metadata = model.SQLModel.metadata
   ```
 
-This setup connects Alembic’s autogenerate feature with your current SQLModel definitions.
+This ensures Alembic is aware of your SQLModel-defined tables.
 
-Edit the `script.py.mako` file to ensure when  running alembic revision ...., the migration scripts will automatically have the import import sqlmodel.sql.sqltypes.
+Additionally, update **`script.py.mako`** so generated migration files automatically include `sqlmodel` types:
 
-```
+```python
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-import import sqlmodel.sql.sqltypes
+import sqlmodel.sql.sqltypes
 ${imports if imports else ""}
 ```
 
@@ -71,56 +72,80 @@ ${imports if imports else ""}
 
 ## 5. Create the Initial Migration
 
-For the first migration to save your current database schema, run:
+1. Mark the database as up-to-date with the current schema:
 
-```
-alembic stamp head
-```
+   ```bash
+   alembic stamp head
+   ```
 
-This marks your database as up to date with the current migration history (without applying any changes).
+2. Generate the initial migration script based on your existing models:
 
-Next, generate a migration script reflecting your current models:
-
-```
-alembic revision --autogenerate -m "Initial schema"
-```
-
-This creates the initial migration file representing your existing schema.
+   ```bash
+   alembic revision --autogenerate -m "Initial schema"
+   ```
 
 ---
 
-## 6. Apply Migrations to the Database
+## 6. Apply Migrations
 
-To apply migrations (initial or subsequent) to your database, use:
+To apply migrations and bring the database schema up to date, run:
 
-```
+```bash
 alembic upgrade head
 ```
 
-This ensures the database schema matches your migration scripts.
-
 ---
 
-## 7. Handling Model Changes and Creating New Migrations
+## 7. Manage Schema Changes
 
-Whenever you make changes to your SQLModel models and want to migrate the database accordingly:
+When models change, follow this workflow:
 
-1. Generate a new migration script that captures the schema changes:
+1. Generate a new migration:
 
-   ```
+   ```bash
    alembic revision --autogenerate -m "Describe your changes here"
    ```
 
-2. Apply the new migration to the database:
+2. Apply the migration:
 
-   ```
+   ```bash
    alembic upgrade head
    ```
 
-This workflow keeps your migrations and database schema synchronized as your models evolve.
+This process ensures your database schema stays synchronized with your evolving SQLModel definitions.
 
 ---
 
-This structured approach ensures smooth version control of your database schema with Alembic and SQLModel integration.
+## 8. Useful Alembic Commands
 
-If any errors occur about the target database being out of date, remember to stamp the database first or upgrade pending migrations before creating new revision scripts.
+* **View migration history**:
+
+  ```bash
+  alembic history --verbose
+  ```
+
+* **Downgrade to a specific version**:
+
+  ```bash
+  alembic downgrade <revision_id>
+  ```
+
+* **Revert one migration step**:
+
+  ```bash
+  alembic downgrade -1
+  ```
+
+---
+
+## Notes
+
+* If errors occur regarding the database being out of sync, run `alembic stamp head` to align Alembic’s versioning with the current database state.
+* Always review generated migration scripts before applying them to ensure correctness.
+
+---
+
+✅ Following this structured workflow ensures smooth database schema version control with **Alembic** and **SQLModel** integration.
+
+---
+
