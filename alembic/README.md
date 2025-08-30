@@ -20,7 +20,7 @@ sudo apt install libpq-dev gcc python3-dev
 Navigate to your project’s `db` module (or wherever your database logic resides) and initialize Alembic:
 
 ```bash
-alembic init alembic
+uv run alembic init alembic
 ```
 
 This creates an `alembic` directory containing the environment and configuration files necessary for migration management.
@@ -75,13 +75,13 @@ ${imports if imports else ""}
 1. Mark the database as up-to-date with the current schema:
 
    ```bash
-   alembic stamp head
+   uv run alembic stamp head
    ```
 
 2. Generate the initial migration script based on your existing models:
 
    ```bash
-   alembic revision --autogenerate -m "Initial schema"
+   uv run alembic revision --autogenerate -m "Initial schema"
    ```
 
 ---
@@ -91,7 +91,7 @@ ${imports if imports else ""}
 To apply migrations and bring the database schema up to date, run:
 
 ```bash
-alembic upgrade head
+uv run alembic upgrade head
 ```
 
 ---
@@ -103,13 +103,13 @@ When models change, follow this workflow:
 1. Generate a new migration:
 
    ```bash
-   alembic revision --autogenerate -m "Describe your changes here"
+   uv run alembic revision --autogenerate -m "Describe your changes here"
    ```
 
 2. Apply the migration:
 
    ```bash
-   alembic upgrade head
+   uv run alembic upgrade head
    ```
 
 This process ensures your database schema stays synchronized with your evolving SQLModel definitions.
@@ -121,19 +121,19 @@ This process ensures your database schema stays synchronized with your evolving 
 * **View migration history**:
 
   ```bash
-  alembic history --verbose
+  uv run alembic history --verbose
   ```
 
 * **Downgrade to a specific version**:
 
   ```bash
-  alembic downgrade <revision_id>
+  uv run alembic downgrade <revision_id>
   ```
 
 * **Revert one migration step**:
 
   ```bash
-  alembic downgrade -1
+  uv run alembic downgrade -1
   ```
 
 ---
