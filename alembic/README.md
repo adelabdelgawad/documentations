@@ -52,7 +52,7 @@ Modify **`alembic/env.py`** to integrate with SQLModel and enable schema autogen
 * Update the `target_metadata` variable:
 
   ```python
-  target_metadata = model.SQLModel.metadata
+  target_metadata = model.metadata
   ```
 
 This ensures Alembic is aware of your SQLModel-defined tables.
