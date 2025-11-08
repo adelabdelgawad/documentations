@@ -1,73 +1,154 @@
-# Asterisk → FastAPI Integration (AMI Listener)
+# 🧩 Asterisk (FreePBX) → FastAPI Integration via AMI Listener
 
-### 🎯 Goal
+**Version:** Final working setup
+**Environment:**
 
-When an **agent** calls IVR `3459`, when a **customer** joins, or when a **digit** (1–5) is pressed, Asterisk sends HTTP POSTs to FastAPI (`10.3.118.3:8000`) with:
-
-* `/agent_start`: `{conversation_id, agent_extension}`
-* `/customer_join`: `{conversation_id, customer_id}`
-* `/rate`: `{conversation_id, rate}`
+* **FreePBX / Asterisk server:** `10.23.48.100`
+* **AMI listener + FastAPI host:** `10.23.223.2`
 
 ---
 
-## 1. FreePBX / Asterisk setup
+## 🎯 Overview
 
-**File:** `/etc/asterisk/manager.conf`
+The goal is for Asterisk to send live call events to FastAPI using an **AMI listener script**:
+
+* When an **agent** starts a call with IVR `3459` → POST `/agent_start`
+* When a **customer** joins the conversation → POST `/customer_join`
+* When a **digit** is pressed in the IVR → POST `/rate`
+
+All messages go to:
+👉 `http://10.3.118.3:8000/` (FastAPI app)
+
+---
+
+## 1️⃣ FreePBX / Asterisk Configuration
+
+### 1.1 Enable AMI for external access
+
+Edit `/etc/asterisk/manager.conf`:
 
 ```ini
+[general]
+enabled = yes
+port = 5038
+bindaddr = 10.23.48.100      ; PBX LAN IP
+displayconnects = no
+
+[admin]
+secret = AvGcGKBjcpPy
+deny = 0.0.0.0/0.0.0.0
+permit = 127.0.0.1/255.255.255.0
+read = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan,originate,message
+write = system,call,log,verbose,command,agent,user,config,command,dtmf,reporting,cdr,dialplan,originate,message
+
 [ami_listener]
 secret = StrongPass123
-permit = 10.3.118.5/32     ; listener IP
+permit = 10.23.223.2/32      ; only allow the listener host
 read = all
 write = none
+
+#include manager_additional.conf
+#include manager_custom.conf
 ```
 
-**Reload:**
+### 1.2 Reload Asterisk Manager
 
 ```bash
-asterisk -rx "manager reload"
-sudo ufw allow from 10.3.118.5 to any port 5038 proto tcp
+sudo asterisk -rx "manager reload"
 ```
 
-**Test:**
+### 1.3 Verify it’s listening
 
 ```bash
-telnet <Asterisk_IP> 5038
+sudo ss -tlnp | grep 5038
 ```
 
-You should see `Asterisk Call Manager`.
+Expected:
+
+```
+LISTEN  0  50 10.23.48.100:5038  *:*  users:(("asterisk",pid=2346,fd=12))
+```
+
+### 1.4 Allow listener IP in firewall
+
+Your FreePBX uses raw iptables (not firewalld).
+Run once and save:
+
+```bash
+sudo iptables -I INPUT -p tcp -s 10.23.223.2 --dport 5038 -j ACCEPT
+sudo iptables-save > /etc/sysconfig/iptables
+```
+
+### 1.5 Test connection from listener
+
+From host `10.23.223.2`:
+
+```bash
+telnet 10.23.48.100 5038
+```
+
+Expected:
+
+```
+Asterisk Call Manager/7.0.3
+```
+
+Then test login:
+
+```
+Action: Login
+Username: ami_listener
+Secret: StrongPass123
+
+```
+
+Response:
+
+```
+Response: Success
+Message: Authentication accepted
+```
+
+✅ AMI connection working.
 
 ---
 
-## 2. Listener host setup
+## 2️⃣ Listener Host (`10.23.223.2`)
 
-**Install deps:**
+### 2.1 Install requirements
 
 ```bash
-sudo apt install python3-pip
+sudo apt update
+sudo apt install python3 python3-pip -y
 pip install requests
 ```
 
-**Save script:** `/usr/local/bin/ami_http_poster.py`
+### 2.2 Save listener script
+
+File: `/usr/local/bin/ami_http_poster.py`
 
 ```python
 #!/usr/bin/env python3
 import socket, requests, threading, time
 
-AMI_HOST='ASTERISK_IP'; AMI_PORT=5038
-AMI_USER='ami_listener'; AMI_PASS='StrongPass123'
-HTTP_BASE='http://10.3.118.3:8000'; IVR_EXT='3459'
-
+AMI_HOST='10.23.48.100'
+AMI_PORT=5038
+AMI_USER='ami_listener'
+AMI_PASS='StrongPass123'
+HTTP_BASE='http://10.3.118.3:8000'
+IVR_EXT='3459'
 conv_map={}
-def post(path,p): 
+
+def post(path,p):
     try: requests.post(HTTP_BASE+path,json=p,timeout=2)
-    except: pass
+    except Exception as e: print("HTTP error:",e)
 
 def handle(e):
-    if e.get('Event')=='Dial' and IVR_EXT in (e.get('Dest','')):
+    ev=e.get('Event')
+    if ev=='Dial' and IVR_EXT in (e.get('Dest','')):
         uid=e['Uniqueid']; conv_map[uid]=uid
         post('/agent_start',{'conversation_id':uid,'agent_extension':e.get('CallerIDNum')})
-    if e.get('Event')=='DTMF':
+    if ev=='DTMF':
         uid=e.get('Uniqueid'); d=e.get('Digit')
         if uid in conv_map: post('/rate',{'conversation_id':uid,'rate':d})
 
@@ -91,74 +172,163 @@ while True:
         print("Reconnect...",e); time.sleep(5)
 ```
 
-**Service:** `/etc/systemd/system/ami_http_poster.service`
+Make executable:
+
+```bash
+sudo chmod +x /usr/local/bin/ami_http_poster.py
+```
+
+### 2.3 Create systemd service
+
+`/etc/systemd/system/ami_http_poster.service`
 
 ```ini
+[Unit]
+Description=Asterisk AMI → HTTP Poster
+After=network.target
+
 [Service]
 ExecStart=/usr/bin/python3 /usr/local/bin/ami_http_poster.py
 Restart=always
+RestartSec=5
+
 [Install]
 WantedBy=multi-user.target
 ```
 
+Start and enable:
+
 ```bash
-sudo systemctl enable --now ami_http_poster
+sudo systemctl daemon-reload
+sudo systemctl enable --now ami_http_poster.service
+sudo journalctl -u ami_http_poster.service -f
 ```
+
+✅ Listener now stays running and reconnects automatically.
 
 ---
 
-## 3. FastAPI server (`10.3.118.3`)
+## 3️⃣ FastAPI Server (`10.3.118.3`)
 
-**Install:**
+### 3.1 Install FastAPI
 
 ```bash
-sudo apt install python3-venv
+sudo apt update
+sudo apt install python3-venv -y
 python3 -m venv /opt/fastapi
 source /opt/fastapi/bin/activate
 pip install fastapi uvicorn
+deactivate
 ```
 
-**App:** `/opt/fastapi/app.py`
+### 3.2 Create app
+
+`/opt/fastapi/app.py`
 
 ```python
 from fastapi import FastAPI
 from pydantic import BaseModel
-app=FastAPI()
-class A(BaseModel): conversation_id:str; agent_extension:str
-class C(BaseModel): conversation_id:str; customer_id:str
-class R(BaseModel): conversation_id:str; rate:str
 
-@app.post("/agent_start") async def s(a:A): print(a); return {"ok":1}
-@app.post("/customer_join") async def c(c:C): print(c); return {"ok":1}
-@app.post("/rate") async def r(r:R): print(r); return {"ok":1}
+app=FastAPI()
+
+class Agent(BaseModel):
+    conversation_id:str
+    agent_extension:str
+
+class Customer(BaseModel):
+    conversation_id:str
+    customer_id:str
+
+class Rate(BaseModel):
+    conversation_id:str
+    rate:str
+
+@app.post("/agent_start")
+async def start(a:Agent):
+    print("Agent start:",a)
+    return {"status":"ok"}
+
+@app.post("/customer_join")
+async def join(c:Customer):
+    print("Customer join:",c)
+    return {"status":"ok"}
+
+@app.post("/rate")
+async def rate(r:Rate):
+    print("Rate:",r)
+    return {"status":"ok"}
 ```
 
-**Run:**
+### 3.3 systemd service
+
+`/etc/systemd/system/fastapi_ami.service`
+
+```ini
+[Unit]
+Description=FastAPI AMI Receiver
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/fastapi
+ExecStart=/opt/fastapi/bin/uvicorn app:app --host 0.0.0.0 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable + start:
 
 ```bash
-uvicorn app:app --host 0.0.0.0 --port 8000
+sudo systemctl daemon-reload
+sudo systemctl enable --now fastapi_ami.service
+sudo journalctl -u fastapi_ami.service -f
+```
+
+### 3.4 Open firewall port 8000
+
+```bash
 sudo ufw allow 8000/tcp
 ```
 
----
-
-## 4. Test flow
-
-1. Start FastAPI and listener.
-2. Agent (e.g. `3868`) calls IVR `3459`.
-3. Watch FastAPI logs — you should see JSON from `/agent_start`.
-4. When customer joins or presses digits, you’ll see `/customer_join` and `/rate`.
+*(Or adjust your firewall if not using UFW.)*
 
 ---
 
-## 5. Recommended next steps
+## 4️⃣ End-to-End Test
 
-* Add token auth in FastAPI + header in listener.
-* Run both as systemd services.
-* Use HTTPS (nginx reverse proxy).
-* For scale: add retry queue in listener.
+1. Confirm listener and FastAPI services are running.
+2. Make an agent call to IVR 3459 on FreePBX.
+3. Watch:
+
+   ```bash
+   # On listener host
+   sudo journalctl -u ami_http_poster.service -f
+   # On FastAPI host
+   sudo journalctl -u fastapi_ami.service -f
+   ```
+4. You should see:
+
+   * `/agent_start` when call starts
+   * `/rate` when customer presses a digit
+   * `/customer_join` when you implement that event (optional)
 
 ---
 
-✅ **End result:**
-Your Asterisk now pushes live call events → FastAPI via HTTP automatically.
+## 5️⃣ Security & Maintenance
+
+* `manager.conf` → only `permit 10.23.223.2/32`.
+* Use a **strong secret** for `ami_listener`.
+* Never expose port 5038 to the internet.
+* Run both services with non-root users if possible.
+* Back up `/etc/sysconfig/iptables` after changes.
+
+---
+
+## ✅ Quick verification commands
+
+| Test              | Command                                                                                                                                      | Expected                  |                     |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- | ------------------- |
+| AMI listening     | `ss -tlnp                                                                                                                                    | grep 5038`                | `10.23.48.100:5038` |
+| AMI login         | `printf "Action: Login\r\nUsername: ami_listener\r\nSecret: StrongPass123\r\n\r\n" \| nc 10.23.48.100 5038`                                  | “Authentication accepted” |                     |
+| FastAPI reachable | `curl -X POST http://10.3.118.3:8000/agent_start -d '{"conversation_id":"t1","agent_extension":"3868"}' -H "Content-Type: application/json"` | `{"status":"ok"}`         |                     |
