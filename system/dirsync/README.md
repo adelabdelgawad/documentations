@@ -1,147 +1,271 @@
+---
 
-# 🧩 Active Directory DirSync Permission Management Scripts
+## Quick reference — GUIDs used
 
-These PowerShell scripts allow you to **grant** or **remove** Active Directory “Replicating Directory Changes” permissions for a user (such as a service account or DirSync user).
+* `1131f6aa-9c07-11d1-f79f-00c04fc2dcd2` → **Replicating Directory Changes**
+* `1131f6ad-9c07-11d1-f79f-00c04fc2dcd2` → **Replicating Directory Changes All**
+* `1131f6ae-9c07-11d1-f79f-00c04fc2dcd2` → *(optional)* **Replicating Directory Changes in Filtered Set**
 
 ---
 
-## 🟩 **Grant DirSync Permissions**
+## 1) List Current DirSync Permissions
 
 ```powershell
-# Import Active Directory module
+<#
+Usage:
+  Save as List-DirSync.ps1 and run in elevated PowerShell.
+
+Purpose:
+  Lists all ACEs on the domain root that grant DirSync-related extended rights.
+#>
+
 Import-Module ActiveDirectory
 
-# Get domain DN
 $domainDN = (Get-ADDomain).DistinguishedName
-
-# Get user SID (replace 'adel.ali' with your username if different)
-$userSID = (Get-ADUser -Identity "adel.ali").SID
-
-# Get current ACL
 $acl = Get-Acl "AD:$domainDN"
 
-# Grant "Replicating Directory Changes" permission
-$guid1 = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$ace1 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $userSID,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guid1
-)
-$acl.AddAccessRule($ace1)
+$guidRepChanges     = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+$guidRepChangesAll  = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+$guidRepFilteredSet = [GUID]"1131f6ae-9c07-11d1-f79f-00c04fc2dcd2"
 
-# Grant "Replicating Directory Changes All" (optional but recommended)
-$guid2 = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-$ace2 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $userSID,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guid2
-)
-$acl.AddAccessRule($ace2)
+$results = $acl.Access |
+    Where-Object { $_.ObjectType -in @($guidRepChanges, $guidRepChangesAll, $guidRepFilteredSet) } |
+    Select-Object @{Name='Account';Expression={$_.IdentityReference}},
+                  @{Name='Right';Expression={
+                      switch ($_.ObjectType.Guid.ToString()) {
+                        $guidRepChanges.Guid.ToString()     { 'Replicating Directory Changes' }
+                        $guidRepChangesAll.Guid.ToString()  { 'Replicating Directory Changes All' }
+                        $guidRepFilteredSet.Guid.ToString() { 'Replicating Directory Changes in Filtered Set' }
+                        default { $_.ObjectType }
+                      }
+                  }},
+                  AccessControlType,
+                  IsInherited,
+                  InheritanceType,
+                  ActiveDirectoryRights
 
-# Apply the changes
-Set-Acl -Path "AD:$domainDN" -AclObject $acl
-
-Write-Host "`n✅ Replication permissions granted successfully to adel.ali!" -ForegroundColor Green
-Write-Host "`nPermissions added:" -ForegroundColor Cyan
-Write-Host "  - Replicating Directory Changes" -ForegroundColor Yellow
-Write-Host "  - Replicating Directory Changes All" -ForegroundColor Yellow
-Write-Host "`nYou can now use DirSync control with this account.`n" -ForegroundColor Green
-```
-
----
-
-## 🟥 **Remove DirSync Permissions**
-
-```powershell
-# Import Active Directory module
-Import-Module ActiveDirectory
-
-# Get domain DN
-$domainDN = (Get-ADDomain).DistinguishedName
-
-# Get user SID
-$userSID = (Get-ADUser -Identity "adel.ali").SID
-
-# Get current ACL
-$acl = Get-Acl "AD:$domainDN"
-
-# Remove "Replicating Directory Changes" permission
-$guid1 = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$ace1 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $userSID,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guid1
-)
-$acl.RemoveAccessRule($ace1) | Out-Null
-
-# Remove "Replicating Directory Changes All" permission
-$guid2 = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-$ace2 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $userSID,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guid2
-)
-$acl.RemoveAccessRule($ace2) | Out-Null
-
-# Apply the changes
-Set-Acl -Path "AD:$domainDN" -AclObject $acl
-
-Write-Host "`n✅ Replication permissions removed successfully from adel.ali!" -ForegroundColor Green
-Write-Host "`nPermissions removed:" -ForegroundColor Cyan
-Write-Host "  - Replicating Directory Changes" -ForegroundColor Yellow
-Write-Host "  - Replicating Directory Changes All" -ForegroundColor Yellow
-Write-Host "`nThe user can no longer use DirSync control.`n" -ForegroundColor Yellow
-```
-
----
-
-## 🔍 **Verify Removal**
-
-```powershell
-# Import Active Directory module
-Import-Module ActiveDirectory
-
-# Get domain DN
-$domainDN = (Get-ADDomain).DistinguishedName
-
-# Get current ACL
-$acl = Get-Acl "AD:$domainDN"
-
-# Define GUIDs for DirSync permissions
-$replicatingChanges = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$replicatingChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-
-# Search for remaining permissions
-$found = $acl.Access | Where-Object {
-    ($_.ObjectType -eq $replicatingChanges -or $_.ObjectType -eq $replicatingChangesAll) -and
-    $_.IdentityReference -like "*adel.ali*"
-}
-
-# Output result
-if ($found) {
-    Write-Host "`n⚠️  User still has replication permissions:" -ForegroundColor Yellow
-    $found | Format-Table IdentityReference, ObjectType, AccessControlType -AutoSize
+if ($results) {
+    $results | Format-Table -AutoSize
 } else {
-    Write-Host "`n✅ No replication permissions found for adel.ali" -ForegroundColor Green
+    Write-Host "No DirSync replication permissions found on domain root." -ForegroundColor Yellow
 }
 ```
 
 ---
 
-## 🧾 Notes
+## 2) Add DirSync (Read-Only) for a **User** Account
 
-* Replace **`adel.ali`** with the appropriate service account username.
-* Run from an **elevated PowerShell session** with Domain Admin or delegated rights.
-* The GUIDs correspond to:
+```powershell
+<#
+Usage:
+  .\Add-DirSync-User.ps1 -Username "svc-dirsync"
+  (Use sAMAccountName or UPN)
 
-  * `1131f6aa-9c07-11d1-f79f-00c04fc2dcd2` → “Replicating Directory Changes”
-  * `1131f6ad-9c07-11d1-f79f-00c04fc2dcd2` → “Replicating Directory Changes All”
-* Optional third permission (for Azure AD Connect–like setups):
-  `1131f6ae-9c07-11d1-f79f-00c04fc2dcd2` → “Replicating Directory Changes in Filtered Set”
+Purpose:
+  Grants Replicating Directory Changes and Replicating Directory Changes All
+  to a user. Safe: checks existing ACEs and only adds missing ones.
+#>
+
+param(
+    [Parameter(Mandatory=$true)] [string]$Username
+)
+
+Import-Module ActiveDirectory
+
+$domainDN = (Get-ADDomain).DistinguishedName
+$user = Get-ADUser -Identity $Username -ErrorAction Stop
+$userSID = $user.SID
+
+$acl = Get-Acl "AD:$domainDN"
+
+$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+
+function Add-IfMissing {
+    param($acl, $sid, $guid)
+    $exists = $acl.Access | Where-Object {
+        ($_.ObjectType -eq $guid) -and ($_.IdentityReference -eq $sid)
+    }
+    if (-not $exists) {
+        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid,
+            [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+            [System.Security.AccessControl.AccessControlType]::Allow,
+            $guid
+        )
+        $acl.AddAccessRule($ace)
+        return $true
+    }
+    return $false
+}
+
+$changed = $false
+if (Add-IfMissing -acl $acl -sid $userSID -guid $guidRepChanges) { $changed = $true }
+if (Add-IfMissing -acl $acl -sid $userSID -guid $guidRepChangesAll) { $changed = $true }
+
+if ($changed) {
+    Set-Acl -Path "AD:$domainDN" -AclObject $acl
+    Write-Host "✅ DirSync permissions granted to user $Username" -ForegroundColor Green
+} else {
+    Write-Host "ℹ️  User $Username already has DirSync permissions (no changes made)." -ForegroundColor Cyan
+}
+```
 
 ---
 
+## 3) Add DirSync (Read-Only) for a **Computer** Account
+
+```powershell
+<#
+Usage:
+  .\Add-DirSync-Computer.ps1 -ComputerName "WEB01"
+  (Use computer sAMAccountName without trailing $; Get-ADComputer accepts either.)
+
+Purpose:
+  Grants Replicating Directory Changes and Replicating Directory Changes All
+  to a machine account (e.g., hostname$). Checks existing ACEs first.
+#>
+
+param(
+    [Parameter(Mandatory=$true)] [string]$ComputerName
+)
+
+Import-Module ActiveDirectory
+
+$domainDN = (Get-ADDomain).DistinguishedName
+$computer = Get-ADComputer -Identity $ComputerName -ErrorAction Stop
+$computerSID = $computer.SID
+
+$acl = Get-Acl "AD:$domainDN"
+
+$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+
+function Add-IfMissing {
+    param($acl, $sid, $guid)
+    $exists = $acl.Access | Where-Object {
+        ($_.ObjectType -eq $guid) -and ($_.IdentityReference -eq $sid)
+    }
+    if (-not $exists) {
+        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid,
+            [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+            [System.Security.AccessControl.AccessControlType]::Allow,
+            $guid
+        )
+        $acl.AddAccessRule($ace)
+        return $true
+    }
+    return $false
+}
+
+$changed = $false
+if (Add-IfMissing -acl $acl -sid $computerSID -guid $guidRepChanges) { $changed = $true }
+if (Add-IfMissing -acl $acl -sid $computerSID -guid $guidRepChangesAll) { $changed = $true }
+
+if ($changed) {
+    Set-Acl -Path "AD:$domainDN" -AclObject $acl
+    Write-Host "✅ DirSync permissions granted to computer $ComputerName$ (machine account)" -ForegroundColor Green
+} else {
+    Write-Host "ℹ️  Computer $ComputerName already has DirSync permissions (no changes made)." -ForegroundColor Cyan
+}
+```
+
+---
+
+## 4) Remove DirSync Permissions (User or Computer)
+
+```powershell
+<#
+Usage:
+  .\Remove-DirSync.ps1 -Identity "svc-dirsync" -Type User
+  .\Remove-DirSync.ps1 -Identity "WEB01" -Type Computer
+
+Purpose:
+  Removes the two DirSync ACEs for a specified user or computer account.
+  It looks up the account SID and removes any matching ACEs.
+#>
+
+param(
+    [Parameter(Mandatory=$true)] [string]$Identity,
+    [Parameter(Mandatory=$true)] [ValidateSet("User","Computer")] [string]$Type
+)
+
+Import-Module ActiveDirectory
+
+$domainDN = (Get-ADDomain).DistinguishedName
+
+if ($Type -eq 'User') {
+    $obj = Get-ADUser -Identity $Identity -ErrorAction Stop
+} else {
+    $obj = Get-ADComputer -Identity $Identity -ErrorAction Stop
+}
+$sid = $obj.SID
+
+$acl = Get-Acl "AD:$domainDN"
+
+$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+
+function Remove-IfExists {
+    param($acl, $sid, $guid)
+    $matches = $acl.Access | Where-Object {
+        ($_.ObjectType -eq $guid) -and ($_.IdentityReference -eq $sid)
+    }
+    $removed = $false
+    foreach ($m in $matches) {
+        # Create identical ACE object to remove
+        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $sid,
+            [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+            [System.Security.AccessControl.AccessControlType]::Allow,
+            $guid
+        )
+        if ($acl.RemoveAccessRule($ace)) { $removed = $true }
+    }
+    return $removed
+}
+
+$changed = $false
+if (Remove-IfExists -acl $acl -sid $sid -guid $guidRepChanges) { $changed = $true }
+if (Remove-IfExists -acl $acl -sid $sid -guid $guidRepChangesAll) { $changed = $true }
+
+if ($changed) {
+    Set-Acl -Path "AD:$domainDN" -AclObject $acl
+    Write-Host "✅ DirSync permissions removed for $Type $Identity" -ForegroundColor Green
+} else {
+    Write-Host "ℹ️  No DirSync permissions found for $Type $Identity (no changes made)." -ForegroundColor Cyan
+}
+```
+
+---
+
+## 5) Verify (Quick Check)
+
+```powershell
+# Example: check for 'svc-dirsync'
+Import-Module ActiveDirectory
+$domainDN = (Get-ADDomain).DistinguishedName
+$acl = Get-Acl "AD:$domainDN"
+
+$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+
+$search = $acl.Access | Where-Object {
+    ($_.ObjectType -in @($guidRepChanges, $guidRepChangesAll)) -and
+    ($_.IdentityReference -like "*svc-dirsync*" -or $_.IdentityReference -like "*WEB01*")
+}
+$search | Format-Table IdentityReference, ObjectType, AccessControlType -AutoSize
+```
+
+---
+
+## Best practices & notes
+
+* Always run in an **elevated** PowerShell session with proper delegation.
+* Prefer giving DirSync rights to a **dedicated service account** or **machine account** used strictly for read-only synchronization.
+* Consider adding `Replicating Directory Changes in Filtered Set` (`1131f6ae...`) only if required by your sync design (e.g., filtered replication or hybrid/AAD Connect scenarios).
+* Audit and document which accounts hold these rights. Periodically review and revoke unused entries.
+* When giving rights to computer accounts, ensure the service runs under the machine identity (Kerberos keytab or proper domain-joined service) and that you use LDAPS or secure Kerberos-authenticated LDAP (SASL/GSSAPI).
+
+---
