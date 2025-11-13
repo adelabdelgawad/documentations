@@ -1,6 +1,6 @@
 # Active Directory DirSync & Read-Only Permissions Management Guide
 
-Complete guide for managing Directory Synchronization (DirSync) and Read-Only permissions in Active Directory for both users and computers.[1][2][3]
+Complete guide for managing Directory Synchronization (DirSync) and Read-Only permissions in Active Directory for both users and computers.
 
 ## Overview
 
@@ -18,12 +18,13 @@ This guide provides comprehensive PowerShell scripts to manage two types of perm
 ## Table of Contents
 
 1. [Universal Management Scripts](#1-universal-management-scripts)
-2. [List All Permissions](#2-list-all-permissions)
+2. [Validate DirSync Permissions](#2-validate-dirsync-permissions)
 3. [Add DirSync Permissions](#3-add-dirsync-permissions)
 4. [Add Read-Only Permissions](#4-add-read-only-permissions)
 5. [Remove DirSync Permissions](#5-remove-dirsync-permissions)
 6. [Remove Read-Only Permissions](#6-remove-read-only-permissions)
 7. [Check Specific Account Permissions](#7-check-specific-account-permissions)
+8. [List All Permissions](#8-list-all-permissions)
 
 ***
 
@@ -31,7 +32,7 @@ This guide provides comprehensive PowerShell scripts to manage two types of perm
 
 ### Master Permission Manager
 
-This comprehensive script manages both DirSync and Read-Only permissions for users and computers.[2][1]
+This comprehensive script manages both DirSync and Read-Only permissions for users and computers.
 
 ### Script: `Manage-ADPermissions.ps1`
 
@@ -50,12 +51,13 @@ This comprehensive script manages both DirSync and Read-Only permissions for use
     User or Computer
     
 .PARAMETER Action
-    Add-DirSync, Add-ReadOnly, Remove-DirSync, Remove-ReadOnly, Check, List
+    Add-DirSync, Add-ReadOnly, Remove-DirSync, Remove-ReadOnly, Check, List, Validate-DirSync
     
 .EXAMPLE
     .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Add-DirSync
     .\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Add-ReadOnly
     .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Check
+    .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Validate-DirSync
     .\Manage-ADPermissions.ps1 -Action List
 #>
 
@@ -68,7 +70,7 @@ param(
     [string]$Type,
     
     [Parameter(Mandatory=$true)]
-    [ValidateSet("Add-DirSync","Add-ReadOnly","Remove-DirSync","Remove-ReadOnly","Check","List")]
+    [ValidateSet("Add-DirSync","Add-ReadOnly","Remove-DirSync","Remove-ReadOnly","Check","List","Validate-DirSync")]
     [string]$Action
 )
 
@@ -126,37 +128,165 @@ function Get-AccountInfo {
     }
 }
 
+function Validate-DirSyncPermissions {
+    param($Identity, $Type)
+    
+    Write-Host "`n=== Validating DirSync Permissions ===" -ForegroundColor Cyan
+    Write-Host "Checking $Type`: $Identity`n" -ForegroundColor White
+    
+    $accountInfo = Get-AccountInfo -Identity $Identity -Type $Type
+    if (-not $accountInfo.Success) { 
+        exit 1 
+    }
+    
+    $userSID = $accountInfo.SID
+    
+    Write-Host "$Type Found: $($accountInfo.Object.DistinguishedName)" -ForegroundColor Gray
+    Write-Host "SID: $userSID" -ForegroundColor Gray
+    Write-Host "Domain: $domainDN`n" -ForegroundColor Gray
+    
+    # Get domain ACL
+    try {
+        $acl = Get-Acl "AD:$domainDN"
+    }
+    catch {
+        Write-Host "[✗] ERROR: Failed to retrieve domain ACL" -ForegroundColor Red
+        exit 1
+    }
+    
+    # Check for permissions
+    $hasDirSync = $false
+    $hasDirSyncAll = $false
+    
+    foreach ($ace in $acl.Access) {
+        try {
+            $aceIdentity = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+            
+            if ($aceIdentity -eq $userSID) {
+                if ($ace.ObjectType -eq $guidRepChanges) {
+                    $hasDirSync = $true
+                    Write-Host "[✓] Found: DS-Replication-Get-Changes (Replicating Directory Changes)" -ForegroundColor Green
+                }
+                if ($ace.ObjectType -eq $guidRepChangesAll) {
+                    $hasDirSyncAll = $true
+                    Write-Host "[✓] Found: DS-Replication-Get-Changes-All (Replicating Directory Changes All)" -ForegroundColor Green
+                }
+            }
+        }
+        catch {
+            # Skip ACEs that can't be translated
+            continue
+        }
+    }
+    
+    # Report missing permissions
+    Write-Host ""
+    if (-not $hasDirSync) {
+        Write-Host "[✗] MISSING: DS-Replication-Get-Changes" -ForegroundColor Red
+    }
+    if (-not $hasDirSyncAll) {
+        Write-Host "[✗] MISSING: DS-Replication-Get-Changes-All" -ForegroundColor Red
+    }
+    
+    # Final status
+    Write-Host "`n=== VALIDATION RESULT ===" -ForegroundColor Yellow
+    if ($hasDirSync -and $hasDirSyncAll) {
+        Write-Host "[✓] SUCCESS: $Type has all required DirSync permissions" -ForegroundColor Green
+        Write-Host "`nThe $Type can perform DirSync operations.`n" -ForegroundColor Gray
+        exit 0
+    }
+    else {
+        Write-Host "[✗] FAILED: $Type is missing DirSync permissions" -ForegroundColor Red
+        Write-Host "`nTo grant permissions, run:" -ForegroundColor Yellow
+        Write-Host ".\Manage-ADPermissions.ps1 -Identity '$Identity' -Type $Type -Action Add-DirSync" -ForegroundColor Yellow
+        Write-Host "Note: Domain Admin privileges required.`n" -ForegroundColor Gray
+        exit 1
+    }
+}
+
 function Add-DirSyncPermissions {
     param($Identity, $Type)
     
     $accountInfo = Get-AccountInfo -Identity $Identity -Type $Type
     if (-not $accountInfo.Success) { return }
     
+    Write-Host "`n=== Granting DirSync Permissions ===" -ForegroundColor Cyan
+    Write-Host "Target $Type`: $Identity`n" -ForegroundColor White
+    
     $acl = Get-Acl "AD:$domainDN"
     
-    # Add DS-Replication-Get-Changes
-    $ace1 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-        $accountInfo.SID,
-        [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-        [System.Security.AccessControl.AccessControlType]::Allow,
-        $guidRepChanges
-    )
-    $acl.AddAccessRule($ace1)
+    # Check if permissions already exist
+    $hasDirSync = $false
+    $hasDirSyncAll = $false
     
-    # Add DS-Replication-Get-Changes-All
-    $ace2 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-        $accountInfo.SID,
-        [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-        [System.Security.AccessControl.AccessControlType]::Allow,
-        $guidRepChangesAll
-    )
-    $acl.AddAccessRule($ace2)
+    foreach ($ace in $acl.Access) {
+        try {
+            $aceIdentity = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+            if ($aceIdentity -eq $accountInfo.SID) {
+                if ($ace.ObjectType -eq $guidRepChanges) {
+                    $hasDirSync = $true
+                }
+                if ($ace.ObjectType -eq $guidRepChangesAll) {
+                    $hasDirSyncAll = $true
+                }
+            }
+        }
+        catch {
+            continue
+        }
+    }
     
-    Set-Acl -Path "AD:$domainDN" -AclObject $acl
+    # Add DS-Replication-Get-Changes if not exists
+    if (-not $hasDirSync) {
+        Write-Host "Granting: DS-Replication-Get-Changes..." -ForegroundColor Yellow
+        $ace1 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $accountInfo.SID,
+            [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+            [System.Security.AccessControl.AccessControlType]::Allow,
+            $guidRepChanges
+        )
+        $acl.AddAccessRule($ace1)
+        Write-Host "[✓] Permission added" -ForegroundColor Green
+    } else {
+        Write-Host "[✓] Already has: DS-Replication-Get-Changes" -ForegroundColor Green
+    }
     
-    Write-Host "✅ DirSync permissions granted to $Type`: $Identity" -ForegroundColor Green
-    Write-Host "   - DS-Replication-Get-Changes" -ForegroundColor Yellow
-    Write-Host "   - DS-Replication-Get-Changes-All" -ForegroundColor Yellow
+    # Add DS-Replication-Get-Changes-All if not exists
+    if (-not $hasDirSyncAll) {
+        Write-Host "Granting: DS-Replication-Get-Changes-All..." -ForegroundColor Yellow
+        $ace2 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+            $accountInfo.SID,
+            [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+            [System.Security.AccessControl.AccessControlType]::Allow,
+            $guidRepChangesAll
+        )
+        $acl.AddAccessRule($ace2)
+        Write-Host "[✓] Permission added" -ForegroundColor Green
+    } else {
+        Write-Host "[✓] Already has: DS-Replication-Get-Changes-All" -ForegroundColor Green
+    }
+    
+    # Apply the ACL if changes were made
+    if (-not $hasDirSync -or -not $hasDirSyncAll) {
+        try {
+            Write-Host "`nApplying permissions to domain..." -ForegroundColor Yellow
+            Set-Acl "AD:$domainDN" -AclObject $acl
+            Write-Host "[✓] Permissions applied successfully!`n" -ForegroundColor Green
+        }
+        catch {
+            Write-Host "[ERROR] Failed to apply permissions: $($_.Exception.Message)" -ForegroundColor Red
+            exit 1
+        }
+    } else {
+        Write-Host "`n[✓] No changes needed - $Type already has all required permissions`n" -ForegroundColor Green
+    }
+    
+    Write-Host "=== Summary ===" -ForegroundColor Cyan
+    Write-Host "$Type`: $Identity" -ForegroundColor White
+    Write-Host "Permissions: DS-Replication-Get-Changes + DS-Replication-Get-Changes-All" -ForegroundColor White
+    Write-Host "Status: GRANTED" -ForegroundColor Green
+    Write-Host "`nNote: These permissions allow reading all directory data for synchronization." -ForegroundColor Gray
+    Write-Host "      They do NOT allow modifying objects.`n" -ForegroundColor Gray
 }
 
 function Add-ReadOnlyPermissions {
@@ -415,6 +545,13 @@ switch ($Action) {
         }
         Check-AccountPermissions -Identity $Identity -Type $Type
     }
+    "Validate-DirSync" {
+        if (-not $Identity -or -not $Type) {
+            Write-Host "❌ Error: -Identity and -Type are required for Validate-DirSync" -ForegroundColor Red
+            exit
+        }
+        Validate-DirSyncPermissions -Identity $Identity -Type $Type
+    }
     "List" {
         List-AllPermissions
     }
@@ -424,566 +561,56 @@ switch ($Action) {
 ### Usage Examples:
 
 ```powershell
+# Validate DirSync permissions for user
+.\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Validate-DirSync
+
+# Validate DirSync permissions for computer
+.\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Validate-DirSync
+
 # List all permissions (both DirSync and Read-Only)
 .\Manage-ADPermissions.ps1 -Action List
 
-# Add DirSync permissions to user adel.ali
+# Add DirSync permissions to user
 .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Add-DirSync
 
-# Add DirSync permissions to computer AALY-LSMH
+# Add DirSync permissions to computer
 .\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Add-DirSync
 
-# Add Read-Only permissions to user adel.ali
-.\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Add-ReadOnly
-
-# Add Read-Only permissions to computer AALY-LSMH
-.\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Add-ReadOnly
-
-# Check what permissions adel.ali has
+# Check what permissions a user has
 .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Check
 
-# Check what permissions computer AALY-LSMH has
-.\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Check
-
-# Remove DirSync permissions from user adel.ali
+# Remove DirSync permissions from user
 .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Remove-DirSync
-
-# Remove Read-Only permissions from computer AALY-LSMH
-.\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Remove-ReadOnly
 ```
 
 ***
 
-## 2. List All Permissions
+## 2. Validate DirSync Permissions
 
-### Script: `List-All-Permissions.ps1`
+### Standalone Validation Script: `Validate-DirSync-Permissions.ps1`
 
 ```powershell
 <#
 .SYNOPSIS
-    Lists all DirSync and Read-Only permissions
+    Validates DirSync permissions for a user or computer
 
 .DESCRIPTION
-    Comprehensive report showing all accounts with DirSync or Read-Only permissions
-#>
-
-Import-Module ActiveDirectory
-
-$domainDN = (Get-ADDomain).DistinguishedName
-$acl = Get-Acl "AD:$domainDN"
-
-$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-
-$objectTypeNames = @{
-    "bf967aba-0de6-11d0-a285-00aa003049e2" = "User"
-    "bf967a86-0de6-11d0-a285-00aa003049e2" = "Computer"
-    "bf967a9c-0de6-11d0-a285-00aa003049e2" = "Group"
-    "5cb41ed0-0e4c-11d0-a286-00aa003049e2" = "Contact"
-    "4828cc14-1437-45bc-9b07-ad6f015e5f28" = "InetOrgPerson"
-    "89e95b76-444d-4c62-991a-0facbeda640c" = "ForeignSecurityPrincipal"
-}
-
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  COMPLETE PERMISSIONS REPORT" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Domain: $domainDN`n" -ForegroundColor Cyan
-
-# List DirSync Permissions
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-Write-Host "  DIRSYNC PERMISSIONS" -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-
-$dirSyncACEs = $acl.Access | Where-Object {
-    ($_.ObjectType -eq $guidRepChanges) -or ($_.ObjectType -eq $guidRepChangesAll)
-}
-
-$groupedDirSync = $dirSyncACEs | Group-Object IdentityReference
-
-if ($groupedDirSync) {
-    foreach ($group in $groupedDirSync) {
-        Write-Host "`nIdentity: $($group.Name)" -ForegroundColor Green
-        foreach ($ace in $group.Group) {
-            $permType = if ($ace.ObjectType -eq $guidRepChanges) { 
-                "DS-Replication-Get-Changes" 
-            } else { 
-                "DS-Replication-Get-Changes-All" 
-            }
-            Write-Host "  → $permType" -ForegroundColor White
-        }
-    }
-} else {
-    Write-Host "No DirSync permissions found." -ForegroundColor Red
-}
-
-# List Read-Only Permissions
-Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-Write-Host "  READ-ONLY PERMISSIONS" -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-
-$readOnlyACEs = $acl.Access | Where-Object {
-    ($_.ActiveDirectoryRights -match "ReadProperty") -and
-    ($_.InheritanceType -eq "Descendents") -and
-    ($_.IdentityReference -notlike "*BUILTIN*") -and
-    ($_.IdentityReference -notlike "*NT AUTHORITY*") -and
-    ($_.IdentityReference -notlike "*Enterprise Domain Controllers*") -and
-    ($_.IdentityReference -notlike "*S-1-5-*")
-}
-
-$groupedReadOnly = $readOnlyACEs | Group-Object IdentityReference
-
-if ($groupedReadOnly) {
-    foreach ($group in $groupedReadOnly) {
-        Write-Host "`nIdentity: $($group.Name)" -ForegroundColor Green
-        foreach ($ace in $group.Group) {
-            $objectTypeName = $objectTypeNames[$ace.InheritedObjectType.ToString()]
-            if ($objectTypeName) {
-                Write-Host "  → ReadProperty on $objectTypeName objects" -ForegroundColor White
-            }
-        }
-    }
-} else {
-    Write-Host "No custom Read-Only permissions found." -ForegroundColor Red
-}
-
-Write-Host "`n========================================`n" -ForegroundColor Cyan
-```
-
-### Usage:
-```powershell
-.\List-All-Permissions.ps1
-```
-
-***
-
-## 3. Add DirSync Permissions
-
-### For User: `Add-DirSync-User.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Grants DirSync permissions to user: adel.ali
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "adel.ali"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$user = Get-ADUser -Identity $Identity -ErrorAction Stop
-$sid = $user.SID
-$acl = Get-Acl "AD:$domainDN"
-
-$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-
-$ace1 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $sid,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guidRepChanges
-)
-$acl.AddAccessRule($ace1)
-
-$ace2 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $sid,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guidRepChangesAll
-)
-$acl.AddAccessRule($ace2)
-
-Set-Acl -Path "AD:$domainDN" -AclObject $acl
-
-Write-Host "✅ DirSync permissions granted to user: $Identity" -ForegroundColor Green
-Write-Host "   - DS-Replication-Get-Changes" -ForegroundColor Yellow
-Write-Host "   - DS-Replication-Get-Changes-All" -ForegroundColor Yellow
-```
-
-### For Computer: `Add-DirSync-Computer.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Grants DirSync permissions to computer: AALY-LSMH
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "AALY-LSMH"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$computer = Get-ADComputer -Identity $Identity -ErrorAction Stop
-$sid = $computer.SID
-$acl = Get-Acl "AD:$domainDN"
-
-$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-
-$ace1 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $sid,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guidRepChanges
-)
-$acl.AddAccessRule($ace1)
-
-$ace2 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-    $sid,
-    [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
-    [System.Security.AccessControl.AccessControlType]::Allow,
-    $guidRepChangesAll
-)
-$acl.AddAccessRule($ace2)
-
-Set-Acl -Path "AD:$domainDN" -AclObject $acl
-
-Write-Host "✅ DirSync permissions granted to computer: $Identity" -ForegroundColor Green
-Write-Host "   - DS-Replication-Get-Changes" -ForegroundColor Yellow
-Write-Host "   - DS-Replication-Get-Changes-All" -ForegroundColor Yellow
-```
-
-***
-
-## 4. Add Read-Only Permissions
-
-### For User: `Add-ReadOnly-User.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Grants read-only permissions to user: adel.ali
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "adel.ali"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$user = Get-ADUser -Identity $Identity -ErrorAction Stop
-$sid = $user.SID
-$acl = Get-Acl "AD:$domainDN"
-
-$objectTypes = @{
-    "User"                     = [GUID]"bf967aba-0de6-11d0-a285-00aa003049e2"
-    "Computer"                 = [GUID]"bf967a86-0de6-11d0-a285-00aa003049e2"
-    "Group"                    = [GUID]"bf967a9c-0de6-11d0-a285-00aa003049e2"
-    "Contact"                  = [GUID]"5cb41ed0-0e4c-11d0-a286-00aa003049e2"
-    "InetOrgPerson"           = [GUID]"4828cc14-1437-45bc-9b07-ad6f015e5f28"
-    "ForeignSecurityPrincipal" = [GUID]"89e95b76-444d-4c62-991a-0facbeda640c"
-}
-
-foreach ($objectType in $objectTypes.Keys) {
-    $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-        $sid,
-        [System.DirectoryServices.ActiveDirectoryRights]::ReadProperty,
-        [System.Security.AccessControl.AccessControlType]::Allow,
-        [System.DirectoryServices.ActiveDirectorySecurityInheritance]::Descendents,
-        $objectTypes[$objectType]
-    )
-    $acl.AddAccessRule($ace)
-}
-
-Set-Acl -Path "AD:$domainDN" -AclObject $acl
-
-Write-Host "✅ Read-Only permissions granted to user: $Identity" -ForegroundColor Green
-foreach ($objectType in $objectTypes.Keys) {
-    Write-Host "   - ReadProperty on $objectType objects" -ForegroundColor Yellow
-}
-```
-
-### For Computer: `Add-ReadOnly-Computer.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Grants read-only permissions to computer: AALY-LSMH
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "AALY-LSMH"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$computer = Get-ADComputer -Identity $Identity -ErrorAction Stop
-$sid = $computer.SID
-$acl = Get-Acl "AD:$domainDN"
-
-$objectTypes = @{
-    "User"                     = [GUID]"bf967aba-0de6-11d0-a285-00aa003049e2"
-    "Computer"                 = [GUID]"bf967a86-0de6-11d0-a285-00aa003049e2"
-    "Group"                    = [GUID]"bf967a9c-0de6-11d0-a285-00aa003049e2"
-    "Contact"                  = [GUID]"5cb41ed0-0e4c-11d0-a286-00aa003049e2"
-    "InetOrgPerson"           = [GUID]"4828cc14-1437-45bc-9b07-ad6f015e5f28"
-    "ForeignSecurityPrincipal" = [GUID]"89e95b76-444d-4c62-991a-0facbeda640c"
-}
-
-foreach ($objectType in $objectTypes.Keys) {
-    $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-        $sid,
-        [System.DirectoryServices.ActiveDirectoryRights]::ReadProperty,
-        [System.Security.AccessControl.AccessControlType]::Allow,
-        [System.DirectoryServices.ActiveDirectorySecurityInheritance]::Descendents,
-        $objectTypes[$objectType]
-    )
-    $acl.AddAccessRule($ace)
-}
-
-Set-Acl -Path "AD:$domainDN" -AclObject $acl
-
-Write-Host "✅ Read-Only permissions granted to computer: $Identity" -ForegroundColor Green
-foreach ($objectType in $objectTypes.Keys) {
-    Write-Host "   - ReadProperty on $objectType objects" -ForegroundColor Yellow
-}
-```
-
-***
-
-## 5. Remove DirSync Permissions
-
-### For User: `Remove-DirSync-User.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Removes DirSync permissions from user: adel.ali
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "adel.ali"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$user = Get-ADUser -Identity $Identity -ErrorAction Stop
-$sid = $user.SID
-$ntAccount = $sid.Translate([System.Security.Principal.NTAccount])
-
-$acl = Get-Acl "AD:$domainDN"
-
-$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-
-$changed = $false
-
-$acesToRemove = $acl.Access | Where-Object {
-    (($_.ObjectType -eq $guidRepChanges) -or ($_.ObjectType -eq $guidRepChangesAll)) -and
-    (($_.IdentityReference.Value -eq $sid.Value) -or ($_.IdentityReference.Value -eq $ntAccount.Value))
-}
-
-foreach ($ace in $acesToRemove) {
-    $permType = if ($ace.ObjectType -eq $guidRepChanges) { 
-        "DS-Replication-Get-Changes" 
-    } else { 
-        "DS-Replication-Get-Changes-All" 
-    }
-    Write-Host "Removing: $($ace.IdentityReference) - $permType" -ForegroundColor Yellow
-    $acl.RemoveAccessRuleSpecific($ace)
-    $changed = $true
-}
-
-if ($changed) {
-    Set-Acl -Path "AD:$domainDN" -AclObject $acl
-    Write-Host "`n✅ DirSync permissions removed from user: $Identity" -ForegroundColor Green
-} else {
-    Write-Host "`nℹ️  No DirSync permissions found for user: $Identity" -ForegroundColor Cyan
-}
-```
-
-### For Computer: `Remove-DirSync-Computer.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Removes DirSync permissions from computer: AALY-LSMH
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "AALY-LSMH"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$computer = Get-ADComputer -Identity $Identity -ErrorAction Stop
-$sid = $computer.SID
-$ntAccount = $sid.Translate([System.Security.Principal.NTAccount])
-
-$acl = Get-Acl "AD:$domainDN"
-
-$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-
-$changed = $false
-
-$acesToRemove = $acl.Access | Where-Object {
-    (($_.ObjectType -eq $guidRepChanges) -or ($_.ObjectType -eq $guidRepChangesAll)) -and
-    (($_.IdentityReference.Value -eq $sid.Value) -or ($_.IdentityReference.Value -eq $ntAccount.Value))
-}
-
-foreach ($ace in $acesToRemove) {
-    $permType = if ($ace.ObjectType -eq $guidRepChanges) { 
-        "DS-Replication-Get-Changes" 
-    } else { 
-        "DS-Replication-Get-Changes-All" 
-    }
-    Write-Host "Removing: $($ace.IdentityReference) - $permType" -ForegroundColor Yellow
-    $acl.RemoveAccessRuleSpecific($ace)
-    $changed = $true
-}
-
-if ($changed) {
-    Set-Acl -Path "AD:$domainDN" -AclObject $acl
-    Write-Host "`n✅ DirSync permissions removed from computer: $Identity" -ForegroundColor Green
-} else {
-    Write-Host "`nℹ️  No DirSync permissions found for computer: $Identity" -ForegroundColor Cyan
-}
-```
-
-***
-
-## 6. Remove Read-Only Permissions
-
-### For User: `Remove-ReadOnly-User.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Removes read-only permissions from user: adel.ali
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "adel.ali"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$user = Get-ADUser -Identity $Identity -ErrorAction Stop
-$sid = $user.SID
-$ntAccount = $sid.Translate([System.Security.Principal.NTAccount])
-
-$acl = Get-Acl "AD:$domainDN"
-
-$objectTypes = @{
-    "User"                     = [GUID]"bf967aba-0de6-11d0-a285-00aa003049e2"
-    "Computer"                 = [GUID]"bf967a86-0de6-11d0-a285-00aa003049e2"
-    "Group"                    = [GUID]"bf967a9c-0de6-11d0-a285-00aa003049e2"
-    "Contact"                  = [GUID]"5cb41ed0-0e4c-11d0-a286-00aa003049e2"
-    "InetOrgPerson"           = [GUID]"4828cc14-1437-45bc-9b07-ad6f015e5f28"
-    "ForeignSecurityPrincipal" = [GUID]"89e95b76-444d-4c62-991a-0facbeda640c"
-}
-
-$objectTypeNames = @{
-    "bf967aba-0de6-11d0-a285-00aa003049e2" = "User"
-    "bf967a86-0de6-11d0-a285-00aa003049e2" = "Computer"
-    "bf967a9c-0de6-11d0-a285-00aa003049e2" = "Group"
-    "5cb41ed0-0e4c-11d0-a286-00aa003049e2" = "Contact"
-    "4828cc14-1437-45bc-9b07-ad6f015e5f28" = "InetOrgPerson"
-    "89e95b76-444d-4c62-991a-0facbeda640c" = "ForeignSecurityPrincipal"
-}
-
-$changed = $false
-
-$acesToRemove = $acl.Access | Where-Object {
-    ($_.ActiveDirectoryRights -match "ReadProperty") -and
-    ($_.InheritanceType -eq "Descendents") -and
-    (($_.IdentityReference.Value -eq $sid.Value) -or ($_.IdentityReference.Value -eq $ntAccount.Value)) -and
-    ($objectTypes.Values -contains $_.InheritedObjectType)
-}
-
-foreach ($ace in $acesToRemove) {
-    $objectTypeName = $objectTypeNames[$ace.InheritedObjectType.ToString()]
-    Write-Host "Removing: $($ace.IdentityReference) - ReadProperty on $objectTypeName objects" -ForegroundColor Yellow
-    $acl.RemoveAccessRuleSpecific($ace)
-    $changed = $true
-}
-
-if ($changed) {
-    Set-Acl -Path "AD:$domainDN" -AclObject $acl
-    Write-Host "`n✅ Read-Only permissions removed from user: $Identity" -ForegroundColor Green
-} else {
-    Write-Host "`nℹ️  No Read-Only permissions found for user: $Identity" -ForegroundColor Cyan
-}
-```
-
-### For Computer: `Remove-ReadOnly-Computer.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Removes read-only permissions from computer: AALY-LSMH
-#>
-
-Import-Module ActiveDirectory
-
-$Identity = "AALY-LSMH"
-$domainDN = (Get-ADDomain).DistinguishedName
-
-$computer = Get-ADComputer -Identity $Identity -ErrorAction Stop
-$sid = $computer.SID
-$ntAccount = $sid.Translate([System.Security.Principal.NTAccount])
-
-$acl = Get-Acl "AD:$domainDN"
-
-$objectTypes = @{
-    "User"                     = [GUID]"bf967aba-0de6-11d0-a285-00aa003049e2"
-    "Computer"                 = [GUID]"bf967a86-0de6-11d0-a285-00aa003049e2"
-    "Group"                    = [GUID]"bf967a9c-0de6-11d0-a285-00aa003049e2"
-    "Contact"                  = [GUID]"5cb41ed0-0e4c-11d0-a286-00aa003049e2"
-    "InetOrgPerson"           = [GUID]"4828cc14-1437-45bc-9b07-ad6f015e5f28"
-    "ForeignSecurityPrincipal" = [GUID]"89e95b76-444d-4c62-991a-0facbeda640c"
-}
-
-$objectTypeNames = @{
-    "bf967aba-0de6-11d0-a285-00aa003049e2" = "User"
-    "bf967a86-0de6-11d0-a285-00aa003049e2" = "Computer"
-    "bf967a9c-0de6-11d0-a285-00aa003049e2" = "Group"
-    "5cb41ed0-0e4c-11d0-a286-00aa003049e2" = "Contact"
-    "4828cc14-1437-45bc-9b07-ad6f015e5f28" = "InetOrgPerson"
-    "89e95b76-444d-4c62-991a-0facbeda640c" = "ForeignSecurityPrincipal"
-}
-
-$changed = $false
-
-$acesToRemove = $acl.Access | Where-Object {
-    ($_.ActiveDirectoryRights -match "ReadProperty") -and
-    ($_.InheritanceType -eq "Descendents") -and
-    (($_.IdentityReference.Value -eq $sid.Value) -or ($_.IdentityReference.Value -eq $ntAccount.Value)) -and
-    ($objectTypes.Values -contains $_.InheritedObjectType)
-}
-
-foreach ($ace in $acesToRemove) {
-    $objectTypeName = $objectTypeNames[$ace.InheritedObjectType.ToString()]
-    Write-Host "Removing: $($ace.IdentityReference) - ReadProperty on $objectTypeName objects" -ForegroundColor Yellow
-    $acl.RemoveAccessRuleSpecific($ace)
-    $changed = $true
-}
-
-if ($changed) {
-    Set-Acl -Path "AD:$domainDN" -AclObject $acl
-    Write-Host "`n✅ Read-Only permissions removed from computer: $Identity" -ForegroundColor Green
-} else {
-    Write-Host "`nℹ️  No Read-Only permissions found for computer: $Identity" -ForegroundColor Cyan
-}
-```
-
-***
-
-## 7. Check Specific Account Permissions
-
-### Script: `Check-Account-Permissions.ps1`
-
-```powershell
-<#
-.SYNOPSIS
-    Checks all permissions for a specific user or computer
+    Checks if the specified account has both "Replicating Directory Changes" and 
+    "Replicating Directory Changes All" permissions at the domain root.
 
 .PARAMETER Identity
-    Username or computer name
+    The username or computer name
 
 .PARAMETER Type
     User or Computer
 
 .EXAMPLE
-    .\Check-Account-Permissions.ps1 -Identity "adel.ali" -Type User
-    .\Check-Account-Permissions.ps1 -Identity "AALY-LSMH" -Type Computer
+    .\Validate-DirSync-Permissions.ps1 -Identity "adel.ali" -Type User
+    .\Validate-DirSync-Permissions.ps1 -Identity "AALY-LSMH" -Type Computer
+
+.OUTPUTS
+    Exit code 0: Has all required permissions
+    Exit code 1: Missing permissions or error
 #>
 
 param(
@@ -997,96 +624,108 @@ param(
 
 Import-Module ActiveDirectory
 
-$domainDN = (Get-ADDomain).DistinguishedName
+Write-Host "`n=== Validating DirSync Permissions ===" -ForegroundColor Cyan
+Write-Host "Checking $Type`: $Identity`n" -ForegroundColor White
 
-# Get account
-if ($Type -eq "User") {
-    $obj = Get-ADUser -Identity $Identity -ErrorAction Stop
-} else {
-    $obj = Get-ADComputer -Identity $Identity -ErrorAction Stop
-}
-
-$sid = $obj.SID
-$ntAccount = $sid.Translate([System.Security.Principal.NTAccount])
-
-$acl = Get-Acl "AD:$domainDN"
-
-$guidRepChanges    = [GUID]"1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
-$guidRepChangesAll = [GUID]"1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
-
-$objectTypeNames = @{
-    "bf967aba-0de6-11d0-a285-00aa003049e2" = "User"
-    "bf967a86-0de6-11d0-a285-00aa003049e2" = "Computer"
-    "bf967a9c-0de6-11d0-a285-00aa003049e2" = "Group"
-    "5cb41ed0-0e4c-11d0-a286-00aa003049e2" = "Contact"
-    "4828cc14-1437-45bc-9b07-ad6f015e5f28" = "InetOrgPerson"
-    "89e95b76-444d-4c62-991a-0facbeda640c" = "ForeignSecurityPrincipal"
-}
-
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  PERMISSIONS REPORT" -ForegroundColor Cyan
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "Identity: $Identity" -ForegroundColor Cyan
-Write-Host "Type: $Type" -ForegroundColor Cyan
-Write-Host "Domain: $domainDN" -ForegroundColor Cyan
-Write-Host "SID: $sid" -ForegroundColor Cyan
-Write-Host "NT Account: $ntAccount`n" -ForegroundColor Cyan
-
-# Check DirSync permissions
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-Write-Host "  DIRSYNC PERMISSIONS" -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-
-$dirSyncACEs = $acl.Access | Where-Object {
-    (($_.ObjectType -eq $guidRepChanges) -or ($_.ObjectType -eq $guidRepChangesAll)) -and
-    (($_.IdentityReference.Value -eq $sid.Value) -or ($_.IdentityReference.Value -eq $ntAccount.Value))
-}
-
-if ($dirSyncACEs) {
-    foreach ($ace in $dirSyncACEs) {
-        $permType = if ($ace.ObjectType -eq $guidRepChanges) { 
-            "DS-Replication-Get-Changes" 
-        } else { 
-            "DS-Replication-Get-Changes-All" 
-        }
-        Write-Host "  ✅ $permType" -ForegroundColor Green
+# Get domain DN and account
+try {
+    $domainDN = (Get-ADDomain).DistinguishedName
+    
+    if ($Type -eq "User") {
+        $accountObj = Get-ADUser -Identity $Identity -ErrorAction Stop
+    } else {
+        $accountObj = Get-ADComputer -Identity $Identity -ErrorAction Stop
     }
-} else {
-    Write-Host "  ❌ No DirSync permissions" -ForegroundColor Red
+    
+    $userSID = $accountObj.SID
+    
+    Write-Host "$Type Found: $($accountObj.DistinguishedName)" -ForegroundColor Gray
+    Write-Host "SID: $userSID" -ForegroundColor Gray
+    Write-Host "Domain: $domainDN`n" -ForegroundColor Gray
+}
+catch {
+    Write-Host "[✗] ERROR: $Type '$Identity' not found" -ForegroundColor Red
+    Write-Host "    $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
 }
 
-# Check Read-Only permissions
-Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-Write-Host "  READ-ONLY PERMISSIONS" -ForegroundColor Yellow
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Yellow
-
-$readOnlyACEs = $acl.Access | Where-Object {
-    ($_.ActiveDirectoryRights -match "ReadProperty") -and
-    ($_.InheritanceType -eq "Descendents") -and
-    (($_.IdentityReference.Value -eq $sid.Value) -or ($_.IdentityReference.Value -eq $ntAccount.Value))
+# Get domain ACL
+try {
+    $acl = Get-Acl "AD:$domainDN"
+}
+catch {
+    Write-Host "[✗] ERROR: Failed to retrieve domain ACL" -ForegroundColor Red
+    Write-Host "    Ensure you have appropriate permissions" -ForegroundColor Red
+    exit 1
 }
 
-if ($readOnlyACEs) {
-    foreach ($ace in $readOnlyACEs) {
-        $objectTypeName = $objectTypeNames[$ace.InheritedObjectType.ToString()]
-        if ($objectTypeName) {
-            Write-Host "  ✅ ReadProperty on $objectTypeName objects" -ForegroundColor Green
+# DirSync Control GUIDs
+$dirSyncGuid = "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+$dirSyncAllGuid = "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+
+# Check for permissions
+$hasDirSync = $false
+$hasDirSyncAll = $false
+
+foreach ($ace in $acl.Access) {
+    try {
+        $aceIdentity = $ace.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier])
+        
+        if ($aceIdentity -eq $userSID) {
+            if ($ace.ObjectType.Guid -eq $dirSyncGuid) {
+                $hasDirSync = $true
+                Write-Host "[✓] Found: DS-Replication-Get-Changes (Replicating Directory Changes)" -ForegroundColor Green
+            }
+            if ($ace.ObjectType.Guid -eq $dirSyncAllGuid) {
+                $hasDirSyncAll = $true
+                Write-Host "[✓] Found: DS-Replication-Get-Changes-All (Replicating Directory Changes All)" -ForegroundColor Green
+            }
         }
     }
-} else {
-    Write-Host "  ❌ No Read-Only permissions" -ForegroundColor Red
+    catch {
+        # Skip ACEs that can't be translated (orphaned SIDs, etc.)
+        continue
+    }
 }
 
-Write-Host "`n========================================`n" -ForegroundColor Cyan
+# Report missing permissions
+Write-Host ""
+if (-not $hasDirSync) {
+    Write-Host "[✗] MISSING: DS-Replication-Get-Changes" -ForegroundColor Red
+}
+if (-not $hasDirSyncAll) {
+    Write-Host "[✗] MISSING: DS-Replication-Get-Changes-All" -ForegroundColor Red
+}
+
+# Final status
+Write-Host "`n=== VALIDATION RESULT ===" -ForegroundColor Yellow
+if ($hasDirSync -and $hasDirSyncAll) {
+    Write-Host "[✓] SUCCESS: $Type has all required DirSync permissions" -ForegroundColor Green
+    Write-Host "`nThe $Type can perform DirSync operations.`n" -ForegroundColor Gray
+    exit 0
+}
+else {
+    Write-Host "[✗] FAILED: $Type is missing DirSync permissions" -ForegroundColor Red
+    Write-Host "`nTo grant permissions, run:" -ForegroundColor Yellow
+    Write-Host ".\Manage-ADPermissions.ps1 -Identity '$Identity' -Type $Type -Action Add-DirSync" -ForegroundColor Yellow
+    Write-Host "Note: Domain Admin privileges required.`n" -ForegroundColor Gray
+    exit 1
+}
 ```
 
-### Usage:
-```powershell
-# Check user permissions
-.\Check-Account-Permissions.ps1 -Identity "adel.ali" -Type User
+### Quick One-Liner Validation
 
-# Check computer permissions
-.\Check-Account-Permissions.ps1 -Identity "AALY-LSMH" -Type Computer
+```powershell
+# Validate user
+$user = "adel.ali"
+$sid = (Get-ADUser $user).SID
+$acl = Get-Acl "AD:$((Get-ADDomain).DistinguishedName)"
+$result = $acl.Access | Where-Object { 
+    $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]) -eq $sid -and 
+    ($_.ObjectType.Guid -eq "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2" -or 
+     $_.ObjectType.Guid -eq "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2")
+}
+if ($result.Count -eq 2) { Write-Host "✓ Has DirSync" -ForegroundColor Green } else { Write-Host "✗ Missing DirSync" -ForegroundColor Red }
 ```
 
 ***
@@ -1097,30 +736,27 @@ Write-Host "`n========================================`n" -ForegroundColor Cyan
 
 | Permission | GUID | Purpose | Risk Level |
 |------------|------|---------|------------|
-| DS-Replication-Get-Changes | 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 | Read directory changes | Medium [3] |
-| DS-Replication-Get-Changes-All | 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 | Read all changes + passwords | High [3] |
-| ReadProperty | N/A | Read object properties | Low [4] |
+| DS-Replication-Get-Changes | 1131f6aa-9c07-11d1-f79f-00c04fc2dcd2 | Read directory changes | Medium |
+| DS-Replication-Get-Changes-All | 1131f6ad-9c07-11d1-f79f-00c04fc2dcd2 | Read all changes + passwords | High |
+| ReadProperty | N/A | Read object properties | Low |
 
 ### Common Tasks
 
 ```powershell
+# Validate DirSync permissions
+.\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Validate-DirSync
+
 # List everything
 .\Manage-ADPermissions.ps1 -Action List
 
 # Grant full DirSync to user
 .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Add-DirSync
 
-# Grant read-only to computer
-.\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Add-ReadOnly
-
 # Check what permissions an account has
 .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Check
 
 # Remove DirSync from user
 .\Manage-ADPermissions.ps1 -Identity "adel.ali" -Type User -Action Remove-DirSync
-
-# Remove read-only from computer
-.\Manage-ADPermissions.ps1 -Identity "AALY-LSMH" -Type Computer -Action Remove-ReadOnly
 ```
 
 ***
@@ -1143,34 +779,14 @@ Import-Module ActiveDirectory
 
 ## Security Best Practices
 
-1. **DirSync Permissions** - Only grant to dedicated service accounts[3][5]
-2. **Read-Only Permissions** - Use for monitoring and reporting[4]
-3. **Regular Audits** - Run list scripts monthly[1]
-4. **Strong Authentication** - Enable MFA for privileged accounts[5]
-5. **Least Privilege** - Grant minimum required permissions[1]
+1. **DirSync Permissions** - Only grant to dedicated service accounts
+2. **Read-Only Permissions** - Use for monitoring and reporting
+3. **Regular Audits** - Run validation scripts monthly
+4. **Strong Authentication** - Enable MFA for privileged accounts
+5. **Least Privilege** - Grant minimum required permissions
 
 ***
 
-## Troubleshooting
-
-### Common Issues
-
-**Access Denied:**
-- Run PowerShell as Administrator
-- Verify Domain Admin rights
-- Check ActiveDirectory module is loaded[2]
-
-**Account Not Found:**
-- Verify spelling and existence in AD
-- For computers, check without $ suffix[3]
-
-**Permissions Not Showing:**
-- Wrong script type (DirSync vs Read-Only)
-- Use Check script to verify both types
-- Wait for AD replication (2-5 minutes)[2]
-
----
-
-**Document Version:** 2.0  
-**Last Updated:** November 11, 2025  
-**Tested On:** Windows Server 2016/2019/2022, Active Directory Domainry Domain Services
+**Document Version:** 3.0  
+**Last Updated:** November 13, 2025  
+**Tested On:** Windows Server 2016/2019/2022, Active Directory Domain Services
