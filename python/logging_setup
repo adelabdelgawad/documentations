@@ -1,4 +1,3 @@
-```markdown
 # Python Logging Setup
 
 A simple, reusable Python logging configuration module with rotating file handler and optional console output.
