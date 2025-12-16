@@ -1,4 +1,8 @@
-```markdown
+I've already provided the content in markdown format in my previous response. You can copy the entire code block (everything between the triple backticks ```) and paste it directly into your `README.md` file.
+
+Here it is again, ready to copy:
+
+```
 # SSH Key Authentication Setup Guide
 
 ## 1. On Ubuntu VM (Server)
@@ -6,29 +10,29 @@
 ### A. Install and Configure SSH
 
 1. **Install OpenSSH Server:**
-```
+```bash
 sudo apt update
 sudo apt install openssh-server -y
 ```
 
 2. **Enable and Start SSH Service:**
-```
+```bash
 sudo systemctl enable ssh
 sudo systemctl start ssh
 ```
 
 3. **Verify SSH is Running:**
-```
+```bash
 sudo systemctl status ssh
 ```
 
 4. **Allow SSH Through Firewall (if enabled):**
-```
+```bash
 sudo ufw allow ssh
 ```
 
 5. **Enable Password Authentication (if needed):**
-```
+```bash
 sudo nano /etc/ssh/sshd_config
 ```
 
@@ -43,14 +47,14 @@ Press `Ctrl+W` to search for "PasswordAuthentication"
 Save with `Ctrl+O`, `Enter`, then exit with `Ctrl+X`
 
 6. **Restart SSH Service:**
-```
+```bash
 sudo systemctl restart ssh
 ```
 
 ### B. Key Configuration
 
 1. **Generate SSH Key Pair:**
-```
+```bash
 ssh-keygen -t rsa -b 4096
 ```
 
@@ -58,30 +62,30 @@ Press `Enter` to accept default location (`~/.ssh/id_rsa`)
 Optionally enter a passphrase or press `Enter` for no passphrase
 
 2. **Verify Keys Were Created:**
-```
+```bash
 ls -la ~/.ssh/
 ```
 
 You should see `id_rsa` (private key) and `id_rsa.pub` (public key)
 
 3. **Add Public Key to authorized_keys:**
-```
+```bash
 cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
 ```
 
 4. **Set Correct Permissions:**
-```
+```bash
 chmod 700 ~/.ssh
 chmod 600 ~/.ssh/authorized_keys
 ```
 
 5. **Display Public Key (for reference):**
-```
+```bash
 cat ~/.ssh/id_rsa.pub
 ```
 
 6. **Display Private Key (to copy to host machine):**
-```
+```bash
 cat ~/.ssh/id_rsa
 ```
 
@@ -92,7 +96,7 @@ Copy the entire output including `-----BEGIN OPENSSH PRIVATE KEY-----` and `----
 ### A. Copy the Private Key from VM
 
 **Method 1: Using SCP (from host machine):**
-```
+```bash
 # Create .ssh directory if it doesn't exist
 mkdir -p ~/.ssh
 
@@ -102,12 +106,12 @@ scp -o HostKeyAlgorithms=ssh-ed25519 arc-webapp-01@10.25.10.50:~/.ssh/id_rsa ~/.
 
 **Method 2: Manual Copy:**
 1. On VM, display the private key:
-```
+```bash
 cat ~/.ssh/id_rsa
 ```
 
 2. On host machine, create the key file:
-```
+```bash
 nano ~/.ssh/arc-webapp-01
 ```
 
@@ -116,12 +120,12 @@ nano ~/.ssh/arc-webapp-01
 ### B. Configure the Private Key
 
 1. **Set Correct Permissions:**
-```
+```bash
 chmod 600 ~/.ssh/arc-webapp-01
 ```
 
 2. **Verify Permissions:**
-```
+```bash
 ls -l ~/.ssh/arc-webapp-01
 ```
 
@@ -130,12 +134,12 @@ Should show: `-rw------- 1 username username`
 ### C. Connect Using SSH Key
 
 **Basic Connection:**
-```
+```bash
 ssh -i ~/.ssh/arc-webapp-01 -o HostKeyAlgorithms=ssh-ed25519 arc-webapp-01@10.25.10.50
 ```
 
 **Alternative Host Key Algorithms:**
-```
+```bash
 # Using rsa-sha2-512
 ssh -i ~/.ssh/arc-webapp-01 -o HostKeyAlgorithms=rsa-sha2-512 arc-webapp-01@10.25.10.50
 
@@ -146,7 +150,7 @@ ssh -i ~/.ssh/arc-webapp-01 -o HostKeyAlgorithms=rsa-sha2-256 arc-webapp-01@10.2
 ### D. Configure SSH for Easier Access (Optional)
 
 1. **Create/Edit SSH Config File:**
-```
+```bash
 nano ~/.ssh/config
 ```
 
@@ -162,12 +166,12 @@ Host arc-vm
 3. **Save and Exit** (`Ctrl+O`, `Enter`, `Ctrl+X`)
 
 4. **Set Config Permissions:**
-```
+```bash
 chmod 600 ~/.ssh/config
 ```
 
 5. **Connect Using Alias:**
-```
+```bash
 ssh arc-vm
 ```
 
@@ -188,7 +192,7 @@ ssh arc-vm
 
 ### Disable Password Authentication (After Key Auth Works)
 On the VM:
-```
+```bash
 sudo nano /etc/ssh/sshd_config
 ```
 
@@ -198,14 +202,14 @@ PasswordAuthentication no
 ```
 
 Restart SSH:
-```
+```bash
 sudo systemctl restart ssh
 ```
 
 ## Additional Tips
 
 ### Copy Files Using SCP
-```
+```bash
 # From host to VM
 scp -i ~/.ssh/arc-webapp-01 -o HostKeyAlgorithms=ssh-ed25519 /local/file arc-webapp-01@10.25.10.50:/remote/path/
 
@@ -215,16 +219,18 @@ scp -i ~/.ssh/arc-webapp-01 -o HostKeyAlgorithms=ssh-ed25519 arc-webapp-01@10.25
 
 ### Find VM IP Address
 On the VM:
-```
+```bash
 ip addr show
 # or
 hostname -I
 ```
 
 ### Test SSH Connection
-```
+```bash
 ssh -v -i ~/.ssh/arc-webapp-01 -o HostKeyAlgorithms=ssh-ed25519 arc-webapp-01@10.25.10.50
 ```
 
 The `-v` flag provides verbose output for debugging
 ```
+
+Just copy everything above (including the outer triple backticks with "markdown") and paste it into your README.md file. It's already formatted correctly for GitHub/GitLab markdown rendering.
