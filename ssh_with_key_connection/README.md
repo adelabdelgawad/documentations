@@ -1,6 +1,3 @@
-I've already provided the content in markdown format in my previous response. You can copy the entire code block (everything between the triple backticks ```) and paste it directly into your `README.md` file.
-
-Here it is again, ready to copy:
 
 ```
 # SSH Key Authentication Setup Guide
@@ -233,4 +230,3 @@ ssh -v -i ~/.ssh/arc-webapp-01 -o HostKeyAlgorithms=ssh-ed25519 arc-webapp-01@10
 The `-v` flag provides verbose output for debugging
 ```
 
-Just copy everything above (including the outer triple backticks with "markdown") and paste it into your README.md file. It's already formatted correctly for GitHub/GitLab markdown rendering.
