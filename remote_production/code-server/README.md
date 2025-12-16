@@ -1,4 +1,4 @@
-```
+```markdown
 # VS Code Server (code-server) Installation Guide
 
 Access VS Code through your web browser from any device on the network.
@@ -263,3 +263,5 @@ Once logged in, you can install VS Code extensions just like in desktop VS Code:
 
 You can sign in with your GitHub/Microsoft account to sync your VS Code settings across devices.
 ```
+
+Copy everything above (including the outer triple backticks with "markdown") and paste it into your README.md file!
