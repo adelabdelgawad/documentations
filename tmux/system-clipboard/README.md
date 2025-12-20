@@ -1,4 +1,4 @@
-````
+
 # tmux → System Clipboard (Linux Mint)
 
 This setup makes copying text in **tmux** automatically available to the **system clipboard**, so you can paste outside tmux with **Ctrl + V**.
