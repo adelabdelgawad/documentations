@@ -1,5 +1,3 @@
----
-
 # Server Git Access (Clone + Push Only)
 
 ## Overview
@@ -159,5 +157,3 @@ git push
 * [ ] Clone works
 * [ ] Push works
 * [ ] No access to other repos confirmed
-
----
